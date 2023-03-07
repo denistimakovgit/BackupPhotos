@@ -2,6 +2,69 @@ import requests
 import time
 import json
 import os
+import configparser
+
+class VK_get_data:
+    """
+    Класс предназначен для работы с API VK
+    """
+    # считываем токен из файла
+    config = configparser.ConfigParser()  # создаём объекта парсера
+    config.read("/Users/denistimakov/PycharmProjects/TestingYaUpload/settings.ini")  # читаем конфиг
+    config['DEFAULT']['vk_token']
+    vk_token = config['DEFAULT']['vk_token']
+
+    def search_user(self):
+        """
+        Метод поиска пользователя ВК по названию страницы либо по идентификатору
+        Возвращает идентификатор пользователя
+        """
+        choise = input(
+            'Для поиска по названию страницы введите 1, для поиска по идентификатору введите 2: ')
+
+        if choise == '1':
+
+            URL = 'https://api.vk.com/method/utils.resolveScreenName'
+            screen_name = input('Введите название страницы: ')
+
+            params = {
+                'screen_name': screen_name,
+                'access_token': self.vk_token,
+                'extended': 1,
+                'v': '5.131'
+            }
+
+            res = requests.get(URL, params=params)
+            res_dict = res.json()
+            user_id = res_dict['response']['object_id']
+
+        elif choise == '2':
+            user_id = input('Введите идентификатор пользователя: ')
+
+        else:
+            print('Введена не корректная команда')
+
+        return user_id
+
+    def vk_get_data(self):
+        """
+        Метод обращается по API VK и возвращает данные о пользователе
+        """
+        URL = 'https://api.vk.com/method/photos.get'
+        user_id = self.search_user()
+        params = {
+            'owner_id': user_id,
+            'album_id': 'profile',
+            'access_token': self.vk_token,
+            'extended': 1,
+            'v': '5.131'
+        }
+
+        # Получаем данные из ВК
+        vk_user_data = requests.get(URL, params=params)
+        vk_data_dict = vk_user_data.json()
+
+        return vk_data_dict
 
 class Photo_backup:
 
@@ -11,31 +74,17 @@ class Photo_backup:
 
     def get_photos(self):
         """
-        функция обращается по API ВК и
-        возвращает словарь {<количество лайков>:[<URL фотографии>, <размер фото>]}
+        Метод возвращает словарь {<количество лайков>:[<URL фотографии>, <размер фото>]}
         """
-        # считываем токен из файла
-        with open('vk_token.txt', 'r') as file:
-            vk_token = file.read().strip()
-
-        self.user_id = input('Введите идентификатор пользователя: ')
-
-        URL = 'https://api.vk.com/method/photos.get'
-        params = {
-            'owner_id': self.user_id,
-            'album_id': 'profile',
-            'access_token': vk_token,
-            'extended': 1,
-            'v': '5.131'
-        }
 
         # Создаю пустой словарь который будет наполнен лайками и ссылками на фото из ВК
         likes_photos = {}
 
         # Получаем данные из ВК
-        vk_user_data = requests.get(URL, params=params)
-        vk_data_dict = vk_user_data.json()
-        res_list = vk_data_dict['response']['items']
+        get_vk_data = VK_get_data()
+        get_data = get_vk_data.vk_get_data()
+        res_list = get_data['response']['items']
+        self.photos_amount = int(input("Введите количество фотографий для сохранения: "))
 
         # Наполняем словарь нужными данными из res_list
         for elem in res_list:
@@ -49,26 +98,61 @@ class Photo_backup:
         return likes_photos
 
 class YaUploader:
+    """
+    Класс предназначен для работы с API Yandex.Диск
+    """
 
     def get_headers(self):
 
         # Получаем токен для Яндекс.Диск из файла
-        with open('ya_token.txt', 'r') as file:
-            self.ya_token = file.read().strip()
+        config = configparser.ConfigParser()  # создаём объекта парсера
+        config.read("/Users/denistimakov/PycharmProjects/TestingYaUpload/settings.ini")  # читаем конфиг
+        config['DEFAULT']['vk_token']
+        self.ya_token = config['DEFAULT']['ya_token']
+
         return {
             "Content-Type": "application/json",
             "Authorization": "OAuth {}".format(self.ya_token)
         }
 
+    def check_folder(self):
+        """
+        Метод для проверки наличия папки Photo_backup на Яндекс.Диск
+        Возвращает информацию о директории в виде словаря
+        """
+        check_url = "https://cloud-api.yandex.net/v1/disk/resources?path=disk%3A%2FPhoto_backup"
+        headers = self.get_headers()
+        response = requests.get(check_url, headers=headers)
+        folder_info = response.json()
+        return folder_info
+
+    def create_folder(self):
+        """
+        Метод для создания директории в Я.Диск для бэкапа
+        возвращает информацию о созданной или существующей директории
+        """
+        current_folder = self.check_folder()
+        if 'DiskNotFoundError' in current_folder.values():
+            create_url = "https://cloud-api.yandex.net/v1/disk/resources"
+            headers = self.get_headers()
+            params = {"path": "Photo_backup"}
+            response = requests.put(create_url, headers=headers, params=params)
+            return response.json()
+        else:
+            return current_folder
+
     def _get_upload_link(self, disk_file_path):
         """
         Метод возвращает ссылку на Яндекс.Диск
         """
+        create_dir = self.create_folder()
         upload_url = "https://cloud-api.yandex.net/v1/disk/resources/upload?https://sun9-69.userapi.com/c5853/u2612048/-6/w_72e349fe.jpg"
         headers = self.get_headers()
         params = {"path": disk_file_path, "overwrite": "true"}
         response = requests.get(upload_url, headers=headers, params=params)
         return response.json()
+
+class Photo_upload:
 
     def upload(self):
         """Метод загружает файлы по списку file_list на яндекс диск"""
@@ -88,7 +172,8 @@ class YaUploader:
                 handler.write(img_data)
 
             # Получаем ссылку для загрузки на Я.Диск с названием файла на Я.Диске
-            href = self._get_upload_link(disk_file_path="Photo_backup/"+str(key)+".jpg").get("href", "")
+            get_link = YaUploader()
+            href = get_link._get_upload_link(disk_file_path="Photo_backup/"+str(key)+".jpg").get("href", "")
             # Загружаем фотографии на Я.Диск
             response = requests.put(href, img_data)
 
@@ -107,12 +192,14 @@ class YaUploader:
                         os.remove(os.path.join(dir_name, item))
             else:
                 print(f'{key}.jpg Error')
-
-        # Записываем в json результат загрузки файлов на Я.Диск
-        with open('data.json', 'w') as f:
-            json.dump(result_list, f)
+        return result_list
 
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
-    uploader = YaUploader()
+    uploader = Photo_upload()
     result = uploader.upload()
+
+    def save_result():
+        # Записываем в json результат загрузки файлов на Я.Диск
+        with open('data.json', 'w') as f:
+            json.dump(result, f)
